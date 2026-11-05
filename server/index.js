@@ -1,16 +1,12 @@
-import dns from 'node:dns';
-dns.setServers(['8.8.8.8', '1.1.1.1']);
-import express from 'express';
-import mongoose from 'mongoose';
-import cors from 'cors';
-import 'dotenv/config';
+import { env, assertEnv } from './src/config/env.js';
+import { connectDb } from './src/config/db.js';
+import { createApp } from './src/app.js';
 
-const app = express();
-app.use(cors());
-app.use(express.json());
-
-app.get('/api/health', (req, res) => res.json({ status: 'ok' }));
-
-mongoose.connect(process.env.MONGODB_URI)
-  .then(() => app.listen(process.env.PORT || 5000, () => console.log('Server running')))
-  .catch(err => console.error(err));
+try {
+  assertEnv();
+  await connectDb();
+  createApp().listen(env.port, () => console.log(`API listening on http://localhost:${env.port}`));
+} catch (err) {
+  console.error('Failed to start server:', err.message);
+  process.exit(1);
+}
