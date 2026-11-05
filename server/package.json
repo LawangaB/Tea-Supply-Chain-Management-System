@@ -8,7 +8,8 @@
     "start": "node index.js",
     "seed": "node src/seed/run.js",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "dev:memory": "node src/seed/memory.js"
   },
   "keywords": [],
   "author": "",
