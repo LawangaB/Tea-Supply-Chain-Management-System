@@ -3,7 +3,11 @@
 **Before the demo (about 10 minutes before)**
 
 1. `cd server && npm run seed` (resets the demo data), then run `npm run dev` in `server/` and in `client/`.
-   - *No internet / Atlas down?* Run `cd server && npm run dev:memory` instead. It starts an in-memory database that is already seeded.
+   - *No internet / Neon down?* Run `cd server && npm run dev:memory` instead (in place of `npm run seed` + `npm run dev`).
+     It starts a throw-away local PostgreSQL 17 that is already migrated and seeded. No Docker is needed; the first run
+     after `npm install` takes a few extra seconds. The data is deleted when you stop it (Ctrl+C).
+   - *Have Docker?* `cd server && npm run dev:local` starts PostgreSQL from `docker-compose.yml`, migrates, seeds and runs the API
+     (set `DATABASE_URL`/`DIRECT_URL` in `server/.env` to the local values shown in `docker-compose.yml`).
 2. Open http://localhost:5173 in one normal and one private window, so two people can be signed in at the same time.
 3. Have a phone, or Chrome DevTools at 390 px wide, ready for step 1.
 
@@ -51,8 +55,11 @@ All demo accounts use the password **`Demo@1234`**. In development builds the si
 ---
 
 ### Questions the client may ask
-- **"What if two collectors save at the same moment?"** Batch IDs come from an atomic counter inside a MongoDB transaction, and a
-  unique index backs it up. A test fires 20 saves in parallel and checks that the 20 IDs are unique and consecutive.
+- **"What if two collectors save at the same moment?"** Batch IDs come from an atomic counter inside a PostgreSQL transaction, and a
+  unique constraint backs it up. A test fires 20 saves in parallel and checks that the 20 IDs are unique and consecutive.
+  If a save fails halfway, the transaction rolls back and the number is reused, so there are no gaps.
+- **"Could someone edit the audit log?"** No. The database itself refuses any change or deletion of audit entries (a trigger),
+  even from the application.
 - **"Can a collector type the net weight?"** No. The server computes it and ignores any value the client sends.
 - **"What happens after 5 wrong passwords?"** The account locks for 15 minutes. The error message never reveals whether the
   email exists. Every sign-in is recorded in the audit log.

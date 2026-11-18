@@ -1,0 +1,258 @@
+// Smart Tea – PostgreSQL schema (Neon in production).
+// Connection URLs live in prisma.config.js (Prisma 7). Business rules that the database can enforce
+// (CHECK constraints, append-only audit_log trigger) are in prisma/migrations/*_db_rules/migration.sql.
+
+generator client {
+  provider = "prisma-client-js"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+/// rules/permissions.js ROLE_CODES
+enum Role {
+  ADM
+  MGT
+  FRM
+  COL
+  FAC
+  QO
+  WH
+  BUY
+  TRN
+}
+
+enum UserStatus {
+  ACTIVE
+  DEACTIVATED
+}
+
+enum ProducerType {
+  SMALLHOLDER
+  ESTATE
+  ORG_MEMBER
+}
+
+enum VerificationStatus {
+  PENDING
+  VERIFIED
+  REJECTED
+}
+
+enum FieldStatus {
+  ACTIVE
+  INACTIVE
+}
+
+enum BatchStatus {
+  IN_TRANSIT
+  RECEIVED
+  ACCEPTED
+  ADJUSTED
+  REJECTED
+  CONSUMED
+}
+
+enum PriceType {
+  PURCHASE_GL
+  SELLING_FT
+}
+
+enum PriceStatus {
+  DRAFT
+  APPROVED
+  RETIRED
+}
+
+/// CHECK cardinality(roles) > 0. passwordHash is omitted by default (config/db.js).
+model User {
+  id           String     @id @default(uuid()) @db.Uuid
+  fullName     String     @map("full_name") @db.VarChar(120)
+  email        String     @unique @db.VarChar(160)
+  phone        String?    @db.VarChar(20)
+  passwordHash String     @map("password_hash")
+  roles        Role[]
+  status       UserStatus @default(ACTIVE)
+  failedLogins Int        @default(0) @map("failed_logins")
+  lockedUntil  DateTime?  @map("locked_until") @db.Timestamptz(3)
+  lastLoginAt  DateTime?  @map("last_login_at") @db.Timestamptz(3)
+  createdAt    DateTime   @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt    DateTime   @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  linkedProducers     Producer[]   @relation("ProducerUser")
+  registeredProducers Producer[]   @relation("ProducerRegisteredBy")
+  verifiedProducers   Producer[]   @relation("ProducerVerifiedBy")
+  collections         Collection[]
+  auditLogs           AuditLog[]
+
+  @@map("app_user")
+}
+
+model CollectionCentre {
+  id          String       @id @default(uuid()) @db.Uuid
+  code        String       @unique @db.VarChar(10)
+  name        String
+  district    String
+  producers   Producer[]
+  collections Collection[]
+
+  @@map("collection_centre")
+}
+
+model ProducerOrg {
+  id        String     @id @default(uuid()) @db.Uuid
+  regNo     String     @unique @map("reg_no")
+  name      String
+  producers Producer[]
+
+  @@map("producer_org")
+}
+
+/// CHECK type <> 'ORG_MEMBER' OR org_id IS NOT NULL. Code format (PRD-NNNNN) is checked in the app.
+model Producer {
+  id                 String             @id @default(uuid()) @db.Uuid
+  code               String             @unique @db.VarChar(20)
+  type               ProducerType
+  fullName           String             @map("full_name") @db.VarChar(120)
+  nicOrRegNo         String             @unique @map("nic_or_reg_no") @db.VarChar(30)
+  phone              String?            @db.VarChar(20)
+  address            String?            @db.VarChar(300)
+  centreId           String             @map("centre_id") @db.Uuid
+  orgId              String?            @map("org_id") @db.Uuid
+  userId             String?            @map("user_id") @db.Uuid
+  verificationStatus VerificationStatus @default(PENDING) @map("verification_status")
+  rejectionReason    String?            @map("rejection_reason") @db.VarChar(300)
+  registeredById     String             @map("registered_by_id") @db.Uuid
+  verifiedById       String?            @map("verified_by_id") @db.Uuid
+  verifiedAt         DateTime?          @map("verified_at") @db.Timestamptz(3)
+  createdAt          DateTime           @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt          DateTime           @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  centre       CollectionCentre @relation(fields: [centreId], references: [id], onDelete: Restrict)
+  org          ProducerOrg?     @relation(fields: [orgId], references: [id], onDelete: Restrict)
+  user         User?            @relation("ProducerUser", fields: [userId], references: [id], onDelete: SetNull)
+  registeredBy User             @relation("ProducerRegisteredBy", fields: [registeredById], references: [id], onDelete: Restrict)
+  verifiedBy   User?            @relation("ProducerVerifiedBy", fields: [verifiedById], references: [id], onDelete: Restrict)
+  fields       Field[]
+  collections  Collection[]
+
+  @@index([userId])
+  @@index([verificationStatus])
+  @@map("producer")
+}
+
+/// CHECK area_ha > 0 AND area_ha <= 10000; GPS in range and both-or-neither.
+model Field {
+  id         String      @id @default(uuid()) @db.Uuid
+  code       String      @unique @db.VarChar(20)
+  producerId String      @map("producer_id") @db.Uuid
+  division   String?     @db.VarChar(80)
+  areaHa     Decimal     @map("area_ha") @db.Decimal(10, 3)
+  variety    String?     @db.VarChar(80)
+  gpsLat     Float?      @map("gps_lat")
+  gpsLng     Float?      @map("gps_lng")
+  status     FieldStatus @default(ACTIVE)
+  createdAt  DateTime    @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt  DateTime    @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  producer    Producer     @relation(fields: [producerId], references: [id], onDelete: Restrict)
+  collections Collection[]
+
+  @@index([producerId])
+  @@map("field")
+}
+
+/// CHECK version >= 1 AND price_per_kg >= 0
+model PriceVersion {
+  id            String       @id @default(uuid()) @db.Uuid
+  priceType     PriceType    @map("price_type")
+  version       Int
+  pricePerKg    Decimal      @map("price_per_kg") @db.Decimal(12, 2)
+  currency      String       @default("LKR") @db.VarChar(3)
+  effectiveFrom DateTime     @map("effective_from") @db.Timestamptz(3)
+  status        PriceStatus  @default(DRAFT)
+  createdAt     DateTime     @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt     DateTime     @updatedAt @map("updated_at") @db.Timestamptz(3)
+  collections   Collection[]
+
+  @@unique([priceType, version])
+  @@index([priceType, status, effectiveFrom])
+  @@map("price_version")
+}
+
+/// CHECK net_kg = round(gross_kg - tare_kg, 3); 0 < gross_kg <= 10000; 0 <= tare_kg < gross_kg; price_per_kg >= 0.
+/// Receipt format (RC-NNNNN) is checked in the app.
+model Collection {
+  id              String   @id @default(uuid()) @db.Uuid
+  receiptNo       String   @unique @map("receipt_no") @db.VarChar(20)
+  producerId      String   @map("producer_id") @db.Uuid
+  fieldId         String   @map("field_id") @db.Uuid
+  centreId        String?  @map("centre_id") @db.Uuid
+  collectorId     String   @map("collector_id") @db.Uuid
+  collectedAt     DateTime @default(now()) @map("collected_at") @db.Timestamptz(3)
+  grossKg         Decimal  @map("gross_kg") @db.Decimal(10, 3)
+  tareKg          Decimal  @map("tare_kg") @db.Decimal(10, 3)
+  netKg           Decimal  @map("net_kg") @db.Decimal(10, 3)
+  purchasePriceId String   @map("purchase_price_id") @db.Uuid
+  pricePerKg      Decimal  @map("price_per_kg") @db.Decimal(12, 2)
+  createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt       DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  producer      Producer          @relation(fields: [producerId], references: [id], onDelete: Restrict)
+  field         Field             @relation(fields: [fieldId], references: [id], onDelete: Restrict)
+  centre        CollectionCentre? @relation(fields: [centreId], references: [id], onDelete: Restrict)
+  collector     User              @relation(fields: [collectorId], references: [id], onDelete: Restrict)
+  purchasePrice PriceVersion      @relation(fields: [purchasePriceId], references: [id], onDelete: Restrict)
+  batch         GreenLeafBatch?
+
+  @@index([producerId])
+  @@index([collectedAt])
+  @@index([collectorId, collectedAt])
+  @@map("collection")
+}
+
+/// 1:1 with Collection via the unique collection_id. CHECK net_kg >= 0, accepted_kg NULL or >= 0.
+/// Batch code format (GL-YYYY-MM-NNNN) is checked in the app.
+model GreenLeafBatch {
+  id           String      @id @default(uuid()) @db.Uuid
+  batchCode    String      @unique @map("batch_code") @db.VarChar(30)
+  collectionId String      @unique @map("collection_id") @db.Uuid
+  netKg        Decimal     @map("net_kg") @db.Decimal(10, 3)
+  acceptedKg   Decimal?    @map("accepted_kg") @db.Decimal(10, 3)
+  status       BatchStatus @default(IN_TRANSIT)
+  createdAt    DateTime    @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt    DateTime    @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  collection Collection @relation(fields: [collectionId], references: [id], onDelete: Restrict)
+
+  @@map("green_leaf_batch")
+}
+
+/// Append-only: a trigger refuses UPDATE and DELETE. user_id uses Restrict, because SetNull would be an UPDATE.
+model AuditLog {
+  id         String   @id @default(uuid()) @db.Uuid
+  userId     String?  @map("user_id") @db.Uuid
+  action     String
+  entityType String   @map("entity_type")
+  entityId   String?  @map("entity_id")
+  oldValue   Json?    @map("old_value")
+  newValue   Json?    @map("new_value")
+  reason     String?
+  ip         String?
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  user User? @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  @@index([entityType, entityId])
+  @@map("audit_log")
+}
+
+/// Sequence counters: "RC", "PRD", "GL-2026-11", "F-00417". See services/counter.js.
+model Counter {
+  id  String @id
+  seq Int    @default(0)
+
+  @@map("counter")
+}

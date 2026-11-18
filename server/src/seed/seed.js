@@ -1,16 +1,10 @@
 /**
- * Demo data (ESPTSCMS-136/146). Wipes every collection and reloads.
- * Used by `npm run seed` (src/seed/run.js) and by the test suite.
+ * Demo data (ESPTSCMS-136/146). Wipes every table and reloads.
+ * Used by `npm run seed` (src/seed/run.js), `npm run dev:memory` and by the test suite.
+ * The schema must already be migrated (`npm run db:deploy`).
  */
 import bcrypt from 'bcryptjs';
-import mongoose from 'mongoose';
-import User from '../models/User.js';
-import Producer from '../models/Producer.js';
-import Field from '../models/Field.js';
-import Collection from '../models/Collection.js';
-import GreenLeafBatch from '../models/GreenLeafBatch.js';
-import AuditLog from '../models/AuditLog.js';
-import { CollectionCentre, ProducerOrg, Counter, PriceVersion } from '../models/reference.js';
+import { prisma } from '../config/db.js';
 import { recordCollection } from '../services/collection.service.js';
 
 export const DEMO_PASSWORD = 'Demo@1234';
@@ -76,16 +70,17 @@ function atLocal(daysAgo, hour) {
   return at > new Date() ? new Date(Date.now() - 5 * 60000) : at; // never in the future
 }
 
+/** Every table, children first. TRUNCATE does not fire the audit_log UPDATE/DELETE trigger. */
+const TABLES = ['green_leaf_batch', 'collection', 'field', 'producer', 'price_version', 'producer_org',
+  'collection_centre', 'audit_log', 'app_user', 'counter'];
+
 export async function wipe() {
-  const models = [User, Producer, Field, Collection, GreenLeafBatch, AuditLog, CollectionCentre, ProducerOrg, Counter, PriceVersion];
-  await Promise.all(models.map((m) => m.deleteMany({})));
-  // Create collections + unique indexes up front (transactions need existing collections on some servers).
-  await Promise.all(models.map((m) => m.createCollection().catch(() => {}).then(() => m.syncIndexes())));
+  await prisma.$executeRawUnsafe(`TRUNCATE TABLE ${TABLES.map((t) => `"${t}"`).join(', ')} CASCADE`);
 }
 
 /** Wipes and loads demo data. Returns handy references (used by tests). */
 export async function seed({ log = () => {} } = {}) {
-  if (mongoose.connection.readyState !== 1) throw new Error('Connect to MongoDB before seeding');
+  if (!prisma) throw new Error('Connect to PostgreSQL before seeding');
   await wipe();
   log('Wiped existing data');
 
@@ -93,39 +88,47 @@ export async function seed({ log = () => {} } = {}) {
   const users = {};
   for (const u of DEMO_USERS) {
     const { key, ...data } = u;
-    users[key] = await User.create({ ...data, phone: '0770000000', passwordHash });
+    users[key] = await prisma.user.create({ data: { ...data, phone: '0770000000', passwordHash } });
   }
   log(`Users: ${DEMO_USERS.length} (password ${DEMO_PASSWORD})`);
 
-  const centres = Object.fromEntries((await CollectionCentre.insertMany(CENTRES)).map((c) => [c.code, c]));
-  const org = await ProducerOrg.create({ regNo: 'TSHDS/KY/0107', name: "Galaha Tea Smallholders' Development Society" });
-  const price = await PriceVersion.create({
-    priceType: 'PURCHASE_GL', version: 1, pricePerKg: 245, currency: 'LKR',
-    effectiveFrom: new Date('2026-01-01T00:00:00+05:30'), status: 'APPROVED',
+  const centres = {};
+  for (const c of CENTRES) centres[c.code] = await prisma.collectionCentre.create({ data: c });
+  const org = await prisma.producerOrg.create({ data: { regNo: 'TSHDS/KY/0107', name: "Galaha Tea Smallholders' Development Society" } });
+  const price = await prisma.priceVersion.create({
+    data: {
+      priceType: 'PURCHASE_GL', version: 1, pricePerKg: 245, currency: 'LKR',
+      effectiveFrom: new Date('2026-01-01T00:00:00+05:30'), status: 'APPROVED',
+    },
   });
   log('Centres: 3, producer org: 1, green-leaf price: LKR 245/kg (v1, APPROVED)');
 
   const producers = {};
   const fields = {};
   for (const p of PRODUCERS) {
-    const producer = await Producer.create({
-      code: p.code, type: p.type, fullName: p.fullName, nicOrRegNo: p.nicOrRegNo, phone: p.phone, address: p.address,
-      centre: centres[p.centre]._id, org: p.org ? org._id : null, user: p.farmer ? users.FRM._id : null,
-      verificationStatus: p.status, registeredBy: users.COL._id,
-      verifiedBy: p.status === 'VERIFIED' ? users.MGT._id : null,
-      verifiedAt: p.status === 'VERIFIED' ? new Date() : null,
+    const producer = await prisma.producer.create({
+      data: {
+        code: p.code, type: p.type, fullName: p.fullName, nicOrRegNo: p.nicOrRegNo, phone: p.phone, address: p.address,
+        centreId: centres[p.centre].id, orgId: p.org ? org.id : null, userId: p.farmer ? users.FRM.id : null,
+        verificationStatus: p.status, registeredById: users.COL.id,
+        verifiedById: p.status === 'VERIFIED' ? users.MGT.id : null,
+        verifiedAt: p.status === 'VERIFIED' ? new Date() : null,
+      },
     });
     producers[p.code] = producer;
     const digits = p.code.slice(4);
-    fields[p.code] = await Field.insertMany(p.fields.map((f, i) => ({
-      ...f, producer: producer._id, code: `F-${digits}-${String.fromCharCode(65 + i)}`,
-    })));
-    await Counter.create({ _id: `F-${digits}`, seq: p.fields.length });
+    fields[p.code] = [];
+    for (const [i, f] of p.fields.entries()) {
+      fields[p.code].push(await prisma.field.create({
+        data: { ...f, producerId: producer.id, code: `F-${digits}-${String.fromCharCode(65 + i)}` },
+      }));
+    }
+    await prisma.counter.create({ data: { id: `F-${digits}`, seq: p.fields.length } });
   }
-  await Counter.create({ _id: 'PRD', seq: 422 });
+  await prisma.counter.create({ data: { id: 'PRD', seq: 422 } });
   log(`Producers: ${PRODUCERS.length} (${PRODUCERS.filter((p) => p.status === 'PENDING').length} pending)`);
 
-  const req = { user: { id: String(users.COL._id) }, ip: 'seed' };
+  const req = { user: { id: users.COL.id }, ip: 'seed' };
   for (const [daysAgo, hour, code, fi, grossKg, tareKg] of HISTORY) {
     await recordCollection({ req, producer: producers[code], field: fields[code][fi], grossKg, tareKg, collectedAt: atLocal(daysAgo, hour) });
   }

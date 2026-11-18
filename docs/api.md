@@ -77,10 +77,12 @@ Rules for `POST /collections`:
 - The request is rejected with field errors when `grossKg ≤ 0`, `tareKg < 0`, `tareKg ≥ grossKg`, or either value is not a JSON
   number (strings such as `"438"` are refused). `collectedAt` can't be in the future.
 - The producer must be **VERIFIED** (409 `PRODUCER_NOT_VERIFIED`), and the field must belong to it and be active.
-- One MongoDB transaction does all of the following: it takes the next receipt number `RC-NNNNN` and the next batch ID
-  `GL-YYYY-MM-NNNN` (an atomic `findOneAndUpdate` + `$inc` counter per month, plus unique indexes), and creates the
-  `Collection` and its `GreenLeafBatch` (status `IN_TRANSIT`). It also stores the APPROVED green-leaf price version used and
-  writes an `AuditLog` entry. If any step fails, nothing is saved.
+- Weights are stored at gram precision (3 dp); the database also enforces `net_kg = round(gross_kg − tare_kg, 3)`,
+  `0 < gross_kg ≤ 10000` and `0 ≤ tare_kg < gross_kg` with CHECK constraints.
+- One PostgreSQL transaction does all of the following: it takes the next receipt number `RC-NNNNN` and the next batch ID
+  `GL-YYYY-MM-NNNN` (an atomic `INSERT … ON CONFLICT DO UPDATE … RETURNING` counter per month, plus unique constraints), and
+  creates the `Collection` and its `GreenLeafBatch` (status `IN_TRANSIT`). It also stores the APPROVED green-leaf price version
+  used and writes an `AuditLog` entry. If any step fails, nothing is saved and the numbers are not used up (no gaps).
 
 Receipt shape:
 
@@ -96,12 +98,17 @@ Receipt shape:
 | GET | `/dashboard/today` | MGT | `{ date, totalNetKg, collectionsCount, producersSupplied, pendingProducers, verifiedProducers, byCentre: [{ centre, netKg, count }], recent: [...] }` |
 |---|---|---|---|
 
-## Data model (MongoDB / Mongoose)
+## Data model (PostgreSQL / Prisma)
 
-`User`, `CollectionCentre`, `ProducerOrg`, `Producer`, `Field`, `PriceVersion`, `Collection`, `GreenLeafBatch`, `Counter`, `AuditLog`.
-The models are in [`server/src/models`](../server/src/models) and follow the ERD, with one exception: the ERD field
-`GreenLeafBatch.collection` is named **`leafCollection`**, because `collection` is a reserved Mongoose path. `AuditLog` is append-only:
-it has no routes, and the model refuses updates.
+`User` (table `app_user`), `CollectionCentre`, `ProducerOrg`, `Producer`, `Field`, `PriceVersion`, `Collection`, `GreenLeafBatch`,
+`Counter`, `AuditLog`. The schema is [`server/prisma/schema.prisma`](../server/prisma/schema.prisma) and follows the ERD:
+UUID primary keys, foreign keys for every reference, Postgres enums for roles and statuses. `GreenLeafBatch.collectionId` is a
+unique 1:1 link to its `Collection`. Business rules the database enforces itself (CHECK constraints, append-only audit log) are
+in [`migrations/*_db_rules`](../server/prisma/migrations).
+
+Ids are UUID strings. Responses keep the shapes of the first version: producers, fields, users, centres and organisations carry
+their id as **`_id`**, while collections and receipts use **`id`**. A malformed id in a URL returns 404. `AuditLog` is append-only:
+it has no routes, and a database trigger refuses `UPDATE` and `DELETE`.
 
 Audited actions: `LOGIN_SUCCESS`, `LOGIN_FAILED`, `LOGIN_BLOCKED`, `LOGOUT`, `USER_CREATED`, `USER_UPDATED`, `USER_ROLES_CHANGED`,
 `USER_DEACTIVATED`, `USER_REACTIVATED`, `PRODUCER_REGISTERED`, `PRODUCER_VERIFIED`, `PRODUCER_REJECTED`, `FIELD_CREATED`, `COLLECTION_CREATED`.

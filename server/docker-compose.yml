@@ -1,0 +1,26 @@
+# Local PostgreSQL 17 (same major version as Neon) for `npm run dev:local`.
+#   docker compose up -d     start      docker compose down -v   stop and delete data
+# Matching server/.env:
+#   DATABASE_URL=postgresql://smarttea:smarttea@localhost:5432/smarttea
+#   DIRECT_URL=postgresql://smarttea:smarttea@localhost:5432/smarttea
+#   DATABASE_URL_TEST=postgresql://smarttea:smarttea@localhost:5432/smarttea_test   (optional, for npm test)
+services:
+  postgres:
+    image: postgres:17
+    environment:
+      POSTGRES_USER: smarttea
+      POSTGRES_PASSWORD: smarttea
+      POSTGRES_DB: smarttea
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./docker/init-test-db.sql:/docker-entrypoint-initdb.d/init-test-db.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U smarttea -d smarttea"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+volumes:
+  pgdata:

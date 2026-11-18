@@ -12,6 +12,23 @@ jobs:
     defaults:
       run:
         working-directory: server
+    services:
+      postgres:
+        image: postgres:17 # same major version as production (Neon)
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: smarttea_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d smarttea_test"
+          --health-interval 2s
+          --health-timeout 3s
+          --health-retries 30
+    env:
+      # Each test file creates, migrates and drops its own schema in this database.
+      DATABASE_URL_TEST: postgresql://postgres:postgres@localhost:5432/smarttea_test
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -19,12 +36,16 @@ jobs:
           node-version: 22
           cache: npm
           cache-dependency-path: server/package-lock.json
-      - name: Cache MongoDB binary (mongodb-memory-server)
-        uses: actions/cache@v4
-        with:
-          path: ~/.cache/mongodb-binaries
-          key: mongodb-binaries-${{ runner.os }}-${{ hashFiles('server/package-lock.json') }}
-      - run: npm ci
+      - run: npm ci # postinstall runs prisma generate
+      - name: Apply migrations (checks they deploy cleanly on an empty database)
+        run: npx prisma migrate deploy
+        env:
+          DATABASE_URL: ${{ env.DATABASE_URL_TEST }}
+          DIRECT_URL: ${{ env.DATABASE_URL_TEST }}
+      - name: Check the schema matches the migrations
+        run: npx prisma migrate diff --from-config-datasource --to-schema prisma/schema.prisma --exit-code
+        env:
+          DIRECT_URL: ${{ env.DATABASE_URL_TEST }}
       - run: npm test
 
   client:
