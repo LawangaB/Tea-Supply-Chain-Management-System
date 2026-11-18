@@ -4,8 +4,8 @@ import { ROLE_CODES, can } from '../rules/permissions.js';
 
 useSeededDb();
 
-// A valid ObjectId that does not exist: allowed roles get 404/400, denied roles get 403.
-const MISSING = '0123456789abcdef01234567';
+// A valid UUID that does not exist: allowed roles get 404/400, denied roles get 403.
+const MISSING = '01234567-89ab-4cde-8f01-23456789abcd';
 
 /** Every protected route and the matrix action that guards it. */
 const ROUTES = [
