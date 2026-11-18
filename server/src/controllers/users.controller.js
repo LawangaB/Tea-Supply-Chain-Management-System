@@ -1,36 +1,41 @@
 import bcrypt from 'bcryptjs';
-import User from '../models/User.js';
+import { prisma } from '../config/db.js';
 import { ApiError } from '../middleware/errors.js';
 import { audit } from '../services/audit.js';
-import { escapeRegex } from './util.js';
+import { ROLE_CODES } from '../rules/permissions.js';
+import { USER_STATUSES } from '../rules/enums.js';
+import { userOut } from '../serializers.js';
+import { assertUuid, icontains } from './util.js';
 
 export async function listUsers(req, res) {
   const { q, role, status } = req.query;
-  const filter = {};
-  if (q) {
-    const re = new RegExp(escapeRegex(String(q)), 'i');
-    filter.$or = [{ fullName: re }, { email: re }];
+  // An unknown role/status matches nothing (as before) instead of failing the enum cast.
+  if ((role && !ROLE_CODES.includes(String(role))) || (status && !USER_STATUSES.includes(String(status)))) {
+    return res.json({ items: [], total: 0 });
   }
-  if (role) filter.roles = String(role);
-  if (status) filter.status = String(status);
-  const items = await User.find(filter).sort({ fullName: 1 }).limit(200);
-  res.json({ items, total: items.length });
+  const where = {};
+  if (q) where.OR = [{ fullName: icontains(q) }, { email: icontains(q) }];
+  if (role) where.roles = { has: String(role) };
+  if (status) where.status = String(status);
+  const items = await prisma.user.findMany({ where, orderBy: { fullName: 'asc' }, take: 200 });
+  res.json({ items: items.map(userOut), total: items.length });
 }
 
 export async function createUser(req, res) {
   const { password, ...data } = req.body;
-  const user = await User.create({ ...data, passwordHash: await bcrypt.hash(password, 10) });
-  await audit({ req, action: 'USER_CREATED', entityType: 'User', entityId: user._id,
+  const user = await prisma.user.create({ data: { ...data, passwordHash: await bcrypt.hash(password, 10) } });
+  await audit({ req, action: 'USER_CREATED', entityType: 'User', entityId: user.id,
     newValue: { email: user.email, roles: user.roles } });
-  res.status(201).json(user);
+  res.status(201).json(userOut(user));
 }
 
 export async function updateUser(req, res) {
-  const user = await User.findById(req.params.id);
+  assertUuid(req.params.id, 'User');
+  const user = await prisma.user.findUnique({ where: { id: req.params.id } });
   if (!user) throw ApiError.notFound('User not found');
   const { password, ...changes } = req.body;
 
-  const isSelf = String(user._id) === req.user.id;
+  const isSelf = user.id === req.user.id;
   if (isSelf && changes.status === 'DEACTIVATED') {
     throw ApiError.conflict('You cannot deactivate your own account', [{ field: 'status', message: 'Cannot deactivate yourself' }]);
   }
@@ -39,18 +44,18 @@ export async function updateUser(req, res) {
   }
 
   const oldValue = { fullName: user.fullName, phone: user.phone, roles: user.roles, status: user.status };
-  Object.assign(user, changes);
+  const data = { ...changes };
   if (changes.status === 'ACTIVE') { // re-activation also clears any lockout
-    user.failedLogins = 0;
-    user.lockedUntil = null;
+    data.failedLogins = 0;
+    data.lockedUntil = null;
   }
-  if (password) user.passwordHash = await bcrypt.hash(password, 10);
-  await user.save();
+  if (password) data.passwordHash = await bcrypt.hash(password, 10);
+  const updated = await prisma.user.update({ where: { id: user.id }, data });
 
   const action = changes.status && changes.status !== oldValue.status
     ? (changes.status === 'DEACTIVATED' ? 'USER_DEACTIVATED' : 'USER_REACTIVATED')
     : changes.roles ? 'USER_ROLES_CHANGED' : 'USER_UPDATED';
-  await audit({ req, action, entityType: 'User', entityId: user._id, oldValue,
+  await audit({ req, action, entityType: 'User', entityId: user.id, oldValue,
     newValue: { ...changes, ...(password ? { password: '(changed)' } : {}) } });
-  res.json(user);
+  res.json(userOut(updated));
 }

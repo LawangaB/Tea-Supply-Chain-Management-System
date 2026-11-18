@@ -1,6 +1,5 @@
 import bcrypt from 'bcryptjs';
-import User from '../models/User.js';
-import Producer from '../models/Producer.js';
+import { prisma } from '../config/db.js';
 import { ApiError } from '../middleware/errors.js';
 import { COOKIE_NAME, cookieOptions, signToken } from '../middleware/auth.js';
 import { allowedActions, menuFor, ROLES } from '../rules/permissions.js';
@@ -14,11 +13,11 @@ const DUMMY_HASH = bcrypt.hashSync('not-a-real-password', 10);
 
 async function sessionPayload(user) {
   const producer = user.roles.includes('FRM')
-    ? await Producer.findOne({ user: user._id ?? user.id }).select('_id code fullName').lean()
+    ? await prisma.producer.findFirst({ where: { userId: user.id }, select: { id: true, code: true, fullName: true } })
     : null;
   return {
     user: {
-      id: String(user._id ?? user.id),
+      id: user.id,
       fullName: user.fullName,
       email: user.email,
       roles: user.roles,
@@ -26,13 +25,16 @@ async function sessionPayload(user) {
     },
     permissions: allowedActions(user.roles),
     menu: menuFor(user.roles),
-    producer,
+    producer: producer && { _id: producer.id, code: producer.code, fullName: producer.fullName },
   };
 }
 
+const setUser = (id, data) => prisma.user.update({ where: { id }, data });
+
 export async function login(req, res) {
   const { email, password } = req.body;
-  const user = await User.findOne({ email }).select('+passwordHash');
+  // The only query that reads passwordHash (it is omitted by default).
+  const user = await prisma.user.findUnique({ where: { email }, omit: { passwordHash: false } });
   if (!user) {
     await bcrypt.compare(password, DUMMY_HASH);
     await audit({ req, action: 'LOGIN_FAILED', entityType: 'User', newValue: { email }, reason: 'unknown email' });
@@ -42,38 +44,34 @@ export async function login(req, res) {
   const now = new Date();
   if (user.lockedUntil && user.lockedUntil > now) {
     const mins = Math.ceil((user.lockedUntil - now) / 60000);
-    await audit({ req, user: user._id, action: 'LOGIN_BLOCKED', entityType: 'User', entityId: user._id, reason: 'locked' });
+    await audit({ req, user: user.id, action: 'LOGIN_BLOCKED', entityType: 'User', entityId: user.id, reason: 'locked' });
     throw new ApiError(423, 'ACCOUNT_LOCKED', `Too many failed sign-in attempts. Try again in ${mins} minute${mins === 1 ? '' : 's'}.`);
   }
-  if (user.lockedUntil && user.lockedUntil <= now) {
-    user.lockedUntil = null;
-    user.failedLogins = 0;
-  }
+  let { failedLogins } = user;
+  if (user.lockedUntil && user.lockedUntil <= now) failedLogins = 0;
 
   const ok = await bcrypt.compare(password, user.passwordHash);
   if (!ok) {
-    user.failedLogins += 1;
-    let reason = `wrong password (${user.failedLogins})`;
-    if (user.failedLogins >= MAX_FAILED_LOGINS) {
-      user.lockedUntil = new Date(now.getTime() + LOCK_MINUTES * 60000);
-      user.failedLogins = 0;
+    failedLogins += 1;
+    let reason = `wrong password (${failedLogins})`;
+    let lockedUntil = null;
+    if (failedLogins >= MAX_FAILED_LOGINS) {
+      lockedUntil = new Date(now.getTime() + LOCK_MINUTES * 60000);
+      failedLogins = 0;
       reason = `locked for ${LOCK_MINUTES} min`;
     }
-    await user.save();
-    await audit({ req, user: user._id, action: 'LOGIN_FAILED', entityType: 'User', entityId: user._id, reason });
+    await setUser(user.id, { failedLogins, lockedUntil });
+    await audit({ req, user: user.id, action: 'LOGIN_FAILED', entityType: 'User', entityId: user.id, reason });
     throw INVALID();
   }
 
   if (user.status !== 'ACTIVE') {
-    await audit({ req, user: user._id, action: 'LOGIN_BLOCKED', entityType: 'User', entityId: user._id, reason: 'deactivated' });
+    await audit({ req, user: user.id, action: 'LOGIN_BLOCKED', entityType: 'User', entityId: user.id, reason: 'deactivated' });
     throw new ApiError(403, 'ACCOUNT_DEACTIVATED', 'This account has been deactivated. Contact your administrator.');
   }
 
-  user.failedLogins = 0;
-  user.lockedUntil = null;
-  user.lastLoginAt = now;
-  await user.save();
-  await audit({ req, user: user._id, action: 'LOGIN_SUCCESS', entityType: 'User', entityId: user._id });
+  await setUser(user.id, { failedLogins: 0, lockedUntil: null, lastLoginAt: now });
+  await audit({ req, user: user.id, action: 'LOGIN_SUCCESS', entityType: 'User', entityId: user.id });
 
   res.cookie(COOKIE_NAME, signToken(user), cookieOptions());
   res.json(await sessionPayload(user));
