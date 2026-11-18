@@ -1,27 +1,50 @@
-import dns from 'node:dns';
-import mongoose from 'mongoose';
+import { PrismaPg } from '@prisma/adapter-pg';
+import { PrismaClient } from '../generated/prisma/index.js';
 import { env } from './env.js';
 
-// Some home/campus DNS resolvers fail on Atlas SRV lookups; use public resolvers.
-dns.setServers(['8.8.8.8', '1.1.1.1']);
+/**
+ * The single shared PrismaClient. Import `prisma` anywhere; call connectDb() once at startup.
+ * `prisma` is a live binding, so modules that imported it see the client created by connectDb().
+ */
+// eslint-disable-next-line import/no-mutable-exports
+export let prisma = null;
 
-export const DEFAULT_DB_NAME = 'smarttea';
-
-/** True when the connection string names no database (e.g. "...mongodb.net/?retryWrites=true"). */
-function hasNoDbName(uri) {
-  const afterHost = uri.replace(/^mongodb(\+srv)?:\/\/[^/]+/, '');
-  return afterHost === '' || afterHost.startsWith('/?') || afterHost === '/';
+/**
+ * Splits a Prisma-style `?schema=...` parameter (used by the tests for isolation) off the URL:
+ * the pg driver does not understand it, the adapter takes the schema as an option instead.
+ */
+function splitSchema(url) {
+  try {
+    const u = new URL(url);
+    const schema = u.searchParams.get('schema') || undefined;
+    u.searchParams.delete('schema');
+    return { connectionString: u.toString(), schema };
+  } catch {
+    return { connectionString: url, schema: undefined };
+  }
 }
 
-export async function connectDb(uri = env.mongoUri) {
-  mongoose.set('strictQuery', true);
-  await mongoose.connect(uri, {
-    serverSelectionTimeoutMS: 15000,
-    ...(hasNoDbName(uri) ? { dbName: DEFAULT_DB_NAME } : {}),
+export function createClient(url = env.databaseUrl, { max = 10 } = {}) {
+  const { connectionString, schema } = splitSchema(url);
+  // With a schema, raw SQL (counters, TRUNCATE) must resolve there too, so set search_path per connection.
+  // Only the tests use this; the Neon pooled URL never carries ?schema=.
+  const pool = { connectionString, max, ...(schema ? { options: `-c search_path="${schema}"` } : {}) };
+  const adapter = new PrismaPg(pool, schema ? { schema } : undefined);
+  return new PrismaClient({
+    adapter,
+    omit: { user: { passwordHash: true } }, // never returned unless a query asks for it (login)
   });
-  return mongoose.connection;
+}
+
+export async function connectDb(url = env.databaseUrl, opts = {}) {
+  if (prisma) await prisma.$disconnect();
+  prisma = createClient(url, opts);
+  await prisma.$connect();
+  await prisma.$queryRaw`SELECT 1`; // fail fast on a bad URL
+  return prisma;
 }
 
 export async function disconnectDb() {
-  await mongoose.disconnect();
+  if (prisma) await prisma.$disconnect();
+  prisma = null;
 }
