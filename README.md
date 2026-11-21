@@ -18,7 +18,7 @@ green-leaf weighing with batch IDs and printable receipts.
 server/
   index.js              boots the app (connect DB + listen)
   src/app.js            Express app (helmet, CORS, cookies, /api/health, /api/v1)
-  prisma/schema.prisma  database schema (User, Producer, Field, Collection, GreenLeafBatch, Counter, AuditLog, …)
+  prisma/schema.prisma  full database schema for all sprints (68 tables) – the source of truth, see docs/DATABASE.md
   prisma/migrations/    SQL migrations, incl. *_db_rules (CHECK constraints, append-only audit_log trigger)
   prisma.config.js      Prisma CLI config (migrations use DIRECT_URL)
   docker-compose.yml    optional local PostgreSQL 17

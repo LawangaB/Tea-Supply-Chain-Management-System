@@ -70,9 +70,33 @@ function atLocal(daysAgo, hour) {
   return at > new Date() ? new Date(Date.now() - 5 * 60000) : at; // never in the future
 }
 
-/** Every table, children first. TRUNCATE does not fire the audit_log UPDATE/DELETE trigger. */
-const TABLES = ['green_leaf_batch', 'collection', 'field', 'producer', 'price_version', 'producer_org',
-  'collection_centre', 'audit_log', 'app_user', 'counter'];
+/**
+ * Every table in prisma/schema.prisma (one TRUNCATE, so order does not matter). TRUNCATE does not fire the
+ * append-only UPDATE/DELETE triggers (audit_log, stock_movement, …). Add new tables here when the schema grows.
+ */
+const TABLES = [
+  // M1 admin & security
+  'app_user', 'permission', 'role_permission', 'user_session', 'system_setting', 'audit_log', 'system_log',
+  'backup_run', 'notification', 'alert_rule',
+  // master data
+  'unit', 'tea_grade', 'inspection_parameter', 'tolerance', 'traceability_field_setting',
+  // M2 / M3 supply
+  'collection_centre', 'producer_org', 'producer', 'field', 'harvest', 'collection_route', 'collection_request',
+  'price_version', 'collection', 'green_leaf_batch', 'factory', 'factory_receipt',
+  // M4–M7 quality, processing, traceability
+  'quality_inspection', 'inspection_result', 'rejected_batch_exception', 'processing_batch', 'processing_input',
+  'processing_stage', 'processing_reconciliation', 'finished_tea_batch', 'finished_batch_source',
+  'batch_release_event', 'qr_code', 'traceability_issue',
+  // M8 warehouse
+  'warehouse', 'warehouse_area', 'storage_location', 'stock_balance', 'stock_movement', 'stock_adjustment',
+  'stock_count', 'stock_count_line', 'low_stock_threshold',
+  // M9 / M11 / M12 sales, payments, transport
+  'buyer', 'product', 'product_batch', 'sales_order', 'order_line', 'order_allocation', 'order_status_history',
+  'invoice', 'invoice_payment', 'payment_adjustment_rule', 'farmer_payment', 'farmer_payment_line',
+  'farmer_payment_adjustment', 'transporter', 'vehicle', 'driver', 'transport_job', 'transport_job_event',
+  'proof_of_delivery',
+  'counter',
+];
 
 export async function wipe() {
   await prisma.$executeRawUnsafe(`TRUNCATE TABLE ${TABLES.map((t) => `"${t}"`).join(', ')} CASCADE`);
