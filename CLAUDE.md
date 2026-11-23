@@ -12,6 +12,8 @@ React client in `client/`, PostgreSQL 17 on Neon.
 - If a feature truly needs a schema change: edit `schema.prisma` only, keep new columns optional or defaulted, run
   `npm run db:migrate -- --name <change>` against a **local** database, add CHECK rules as SQL to the generated migration,
   update `src/rules/enums.js` (new enum values) and `TABLES` in `src/seed/seed.js` (new tables). Say so clearly in the PR.
+- Migration `.sql` files must be **ASCII only** (no `─ → ≤ …` even in comments): on Windows the embedded test database
+  is WIN1252 and Prisma sends the whole file, so one such character fails the migration (P3018 / 22P05).
 - Never: edit an existing migration, run `prisma migrate dev` / `migrate reset` / `db push` against Neon, write raw DDL in app
   code, or change the database from the Neon console.
 - Business rules that span rows (only VERIFIED producers, only RELEASED batches, allocation ≤ available, status transitions)

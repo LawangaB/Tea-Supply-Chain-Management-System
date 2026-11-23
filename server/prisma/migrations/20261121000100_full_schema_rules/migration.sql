@@ -6,7 +6,7 @@
 -- Rules that need other tables (e.g. "only RELEASED batches can be stocked in") are checked in the app
 -- inside a transaction; see docs/DATABASE.md.
 
--- ───────────────────────────── Existing tables: new columns ─────────────────────────────
+-- ----------------------------- Existing tables: new columns -----------------------------
 ALTER TABLE "green_leaf_batch"
   ADD CONSTRAINT "green_leaf_batch_available_kg_check"
     CHECK ("available_kg" IS NULL OR ("available_kg" >= 0 AND ("accepted_kg" IS NULL OR "available_kg" <= "accepted_kg")));
@@ -34,7 +34,7 @@ CREATE TRIGGER "green_leaf_batch_code_no_update"
   BEFORE UPDATE OF "batch_code" ON "green_leaf_batch"
   FOR EACH ROW EXECUTE FUNCTION "green_leaf_batch_code_immutable"();
 
--- ───────────────────────────── Master data ─────────────────────────────
+-- ----------------------------- Master data -----------------------------
 ALTER TABLE "tea_grade"
   ADD CONSTRAINT "tea_grade_version_check" CHECK ("version" >= 1),
   ADD CONSTRAINT "tea_grade_rejection_reason_check" CHECK ("status" <> 'REJECTED' OR "rejection_reason" IS NOT NULL);
@@ -52,7 +52,7 @@ ALTER TABLE "tolerance"
   ADD CONSTRAINT "tolerance_value_check" CHECK ("value" >= 0),
   ADD CONSTRAINT "tolerance_rejection_reason_check" CHECK ("status" <> 'REJECTED' OR "rejection_reason" IS NOT NULL);
 
--- ───────────────────────────── M2 / M3 ─────────────────────────────
+-- ----------------------------- M2 / M3 -----------------------------
 ALTER TABLE "harvest"
   ADD CONSTRAINT "harvest_estimated_kg_check" CHECK ("estimated_kg" > 0 AND "estimated_kg" <= 100000);
 
@@ -65,7 +65,7 @@ ALTER TABLE "factory_receipt"
   ADD CONSTRAINT "factory_receipt_received_kg_check" CHECK ("received_kg" >= 0 AND "received_kg" <= 10000),
   ADD CONSTRAINT "factory_receipt_review_status_check" CHECK ("is_flagged" OR "review_status" = 'NOT_REQUIRED');
 
--- ───────────────────────────── M4 / M6 quality ─────────────────────────────
+-- ----------------------------- M4 / M6 quality -----------------------------
 ALTER TABLE "quality_inspection"
   ADD CONSTRAINT "quality_inspection_subject_check" CHECK (
     ("subject" = 'GREEN_LEAF'   AND "green_leaf_batch_id" IS NOT NULL AND "finished_batch_id" IS NULL)
@@ -81,7 +81,7 @@ ALTER TABLE "quality_inspection"
   ),
   ADD CONSTRAINT "quality_inspection_deduction_pct_check" CHECK ("deduction_pct" IS NULL OR "deduction_pct" BETWEEN 0 AND 100);
 
--- ───────────────────────────── M5 processing ─────────────────────────────
+-- ----------------------------- M5 processing -----------------------------
 ALTER TABLE "processing_input"
   ADD CONSTRAINT "processing_input_allocated_kg_check" CHECK ("allocated_kg" > 0);
 
@@ -100,7 +100,7 @@ ALTER TABLE "processing_reconciliation"
     "status" NOT IN ('APPROVED', 'REJECTED') OR ("decided_by_id" IS NOT NULL AND "decision_reason" IS NOT NULL)
   );
 
--- ───────────────────────────── M6 / M7 finished tea + traceability ─────────────────────────────
+-- ----------------------------- M6 / M7 finished tea + traceability -----------------------------
 ALTER TABLE "finished_tea_batch"
   ADD CONSTRAINT "finished_tea_batch_quantity_kg_check" CHECK ("quantity_kg" > 0),
   ADD CONSTRAINT "finished_tea_batch_input_kg_check" CHECK ("input_kg" IS NULL OR "input_kg" > 0),
@@ -123,7 +123,7 @@ ALTER TABLE "traceability_issue"
     "finished_batch_id" IS NOT NULL OR "processing_batch_id" IS NOT NULL OR "green_leaf_batch_id" IS NOT NULL
   );
 
--- ───────────────────────────── M8 warehouse ─────────────────────────────
+-- ----------------------------- M8 warehouse -----------------------------
 ALTER TABLE "storage_location"
   ADD CONSTRAINT "storage_location_capacity_kg_check" CHECK ("capacity_kg" IS NULL OR "capacity_kg" > 0);
 
@@ -159,7 +159,7 @@ ALTER TABLE "low_stock_threshold"
   ADD CONSTRAINT "low_stock_threshold_threshold_kg_check" CHECK ("threshold_kg" > 0),
   ADD CONSTRAINT "low_stock_threshold_decided_by_id_check" CHECK ("status" = 'PENDING' OR "decided_by_id" IS NOT NULL);
 
--- ───────────────────────────── M9 orders + invoices ─────────────────────────────
+-- ----------------------------- M9 orders + invoices -----------------------------
 ALTER TABLE "sales_order"
   ADD CONSTRAINT "sales_order_subtotal_check" CHECK ("subtotal" >= 0),
   ADD CONSTRAINT "sales_order_version_check" CHECK ("version" >= 0),
@@ -181,7 +181,7 @@ ALTER TABLE "invoice"
 ALTER TABLE "invoice_payment"
   ADD CONSTRAINT "invoice_payment_amount_check" CHECK ("amount" > 0);
 
--- ───────────────────────────── M11 farmer payments ─────────────────────────────
+-- ----------------------------- M11 farmer payments -----------------------------
 ALTER TABLE "payment_adjustment_rule"
   ADD CONSTRAINT "payment_adjustment_rule_version_check" CHECK ("version" >= 1),
   ADD CONSTRAINT "payment_adjustment_rule_value_check" CHECK ("value" >= 0),
@@ -207,7 +207,7 @@ ALTER TABLE "farmer_payment_line"
   ADD CONSTRAINT "farmer_payment_line_price_per_kg_check" CHECK ("price_per_kg" >= 0),
   ADD CONSTRAINT "farmer_payment_line_amount_check" CHECK ("amount" >= 0);
 
--- ───────────────────────────── M12 transport ─────────────────────────────
+-- ----------------------------- M12 transport -----------------------------
 ALTER TABLE "vehicle"
   ADD CONSTRAINT "vehicle_capacity_kg_check" CHECK ("capacity_kg" IS NULL OR "capacity_kg" > 0);
 
@@ -224,14 +224,14 @@ ALTER TABLE "transport_job_event"
 ALTER TABLE "proof_of_delivery"
   ADD CONSTRAINT "proof_of_delivery_evidence_check" CHECK ("signature_url" IS NOT NULL OR "photo_url" IS NOT NULL);
 
--- ───────────────────────────── M13 notifications ─────────────────────────────
+-- ----------------------------- M13 notifications -----------------------------
 ALTER TABLE "alert_rule"
   ADD CONSTRAINT "alert_rule_recipient_roles_check" CHECK (cardinality("recipient_roles") > 0);
 
 ALTER TABLE "low_stock_threshold"
   ADD CONSTRAINT "low_stock_threshold_notify_roles_check" CHECK (cardinality("notify_roles") > 0);
 
--- ───────────────────────────── Append-only history tables ─────────────────────────────
+-- ----------------------------- Append-only history tables -----------------------------
 -- Same idea as audit_log: history rows can be added but never changed or removed.
 -- (TRUNCATE, used only by the seed script to reset demo data, is not blocked.)
 CREATE FUNCTION "append_only"() RETURNS trigger

@@ -24,6 +24,8 @@ US-001 … US-074 and the Role & Permission Matrix v2. Feature work should **use
    schema and migrations disagree – regenerate the migration, don't hand-edit around it.
 7. When you add an enum value, also add it to `server/src/rules/enums.js` (a test checks they match).
 8. When you add a table, add it to `TABLES` in `server/src/seed/seed.js`.
+9. Keep migration `.sql` files **ASCII only**, comments included. On Windows the embedded test database uses WIN1252,
+   and characters such as `─`, `→`, `≤` make `prisma migrate deploy` fail with P3018 / 22P05.
 
 ## 2. Conventions
 

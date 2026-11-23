@@ -1,4 +1,4 @@
--- Full schema for all sprints (US-001 … US-074). Generated from prisma/schema.prisma; only adds
+-- Full schema for all sprints (US-001 ... US-074). Generated from prisma/schema.prisma; only adds
 -- enums, tables, nullable/defaulted columns, indexes and foreign keys, so existing data is untouched.
 
 -- CreateEnum
