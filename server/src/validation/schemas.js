@@ -1,9 +1,11 @@
 import { z } from 'zod';
 import { ROLE_CODES } from '../rules/permissions.js';
-import { PRODUCER_TYPES } from '../models/Producer.js';
+import { PRODUCER_TYPES, USER_STATUSES } from '../rules/enums.js';
+import { UUID_RE } from '../controllers/util.js';
 
-export const objectId = (label = 'id') => z.string({ message: `${label} is required` })
-  .regex(/^[0-9a-fA-F]{24}$/, `Invalid ${label}`);
+/** Record ids are UUIDs (Postgres). Same messages as the old ObjectId check. */
+export const uuid = (label = 'id') => z.string({ message: `${label} is required` })
+  .regex(UUID_RE, `Invalid ${label}`);
 
 const optionalText = (max) => z.string().trim().max(max).optional().or(z.literal('').transform(() => undefined));
 
@@ -40,7 +42,7 @@ export const updateUserSchema = z.object({
   phone,
   password: password.optional(),
   roles: roles.optional(),
-  status: z.enum(['ACTIVE', 'DEACTIVATED']).optional(),
+  status: z.enum(USER_STATUSES).optional(),
 }).refine((v) => Object.keys(v).length > 0, { message: 'Nothing to update' });
 
 // Sri Lankan NIC: old format 9 digits + V/X, new format 12 digits.
@@ -62,8 +64,8 @@ export const createProducerSchema = z.object({
   nicOrRegNo: z.string({ message: 'NIC / registration no. is required' }).trim().toUpperCase().min(5, 'NIC / registration no. is required').max(30),
   phone,
   address: optionalText(300),
-  centreId: objectId('collection centre'),
-  orgId: objectId('producer organisation').optional().or(z.literal('').transform(() => undefined)),
+  centreId: uuid('collection centre'),
+  orgId: uuid('producer organisation').optional().or(z.literal('').transform(() => undefined)),
   fields: z.array(fieldSchema).max(20).optional().default([]),
 }).superRefine((v, ctx) => {
   if (v.type !== 'ESTATE' && !NIC_RE.test(v.nicOrRegNo)) {
@@ -80,8 +82,8 @@ export const rejectProducerSchema = z.object({
 
 /** Weights are validated by rules/netWeight.js so that the messages are the same everywhere. */
 export const createCollectionSchema = z.object({
-  producerId: objectId('producer'),
-  fieldId: objectId('field'),
+  producerId: uuid('producer'),
+  fieldId: uuid('field'),
   grossKg: z.unknown(),
   tareKg: z.unknown(),
   collectedAt: z.coerce.date({ message: 'Invalid date/time' }).optional(),

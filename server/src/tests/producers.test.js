@@ -1,13 +1,12 @@
 import { describe, it, expect } from 'vitest';
-import Producer from '../models/Producer.js';
-import AuditLog from '../models/AuditLog.js';
+import { prisma } from '../config/db.js';
 import { PRODUCER_CODE_RE } from '../rules/codes.js';
 import { useSeededDb, loginAs } from './helpers.js';
 
 const ctx = useSeededDb();
 const newProducer = (extra = {}) => ({
   type: 'SMALLHOLDER', fullName: 'P. Anura Dissanayake', nicOrRegNo: '198012345678', phone: '0712223334',
-  address: 'Galaha', centreId: String(ctx.centres.GAL._id),
+  address: 'Galaha', centreId: ctx.centres.GAL.id,
   fields: [{ division: 'Home', areaHa: 0.75, variety: 'TRI 2025' }], ...extra,
 });
 
@@ -21,7 +20,7 @@ describe('producer registry (ESPTSCMS-17)', () => {
     expect(res.body.verificationStatus).toBe('PENDING');
     const fields = await col.get(`/api/v1/producers/${res.body._id}/fields`);
     expect(fields.body.items.map((f) => f.code)).toEqual(['F-00423-A']);
-    expect(await AuditLog.exists({ action: 'PRODUCER_REGISTERED' })).toBeTruthy();
+    expect(await prisma.auditLog.findFirst({ where: { action: 'PRODUCER_REGISTERED' } })).toBeTruthy();
   });
 
   it('rejects a duplicate NIC with 409', async () => {
@@ -58,13 +57,13 @@ describe('producer registry (ESPTSCMS-17)', () => {
     const frm = await loginAs('FRM');
     const list = await frm.get('/api/v1/producers');
     expect(list.body.items.map((p) => p.code)).toEqual(['PRD-00417']);
-    expect((await frm.get(`/api/v1/producers/${ctx.producers['PRD-00417']._id}`)).status).toBe(200);
-    expect((await frm.get(`/api/v1/producers/${ctx.producers['PRD-00419']._id}`)).status).toBe(403);
+    expect((await frm.get(`/api/v1/producers/${ctx.producers['PRD-00417'].id}`)).status).toBe(200);
+    expect((await frm.get(`/api/v1/producers/${ctx.producers['PRD-00419'].id}`)).status).toBe(403);
     expect((await frm.post('/api/v1/producers').send(newProducer({ nicOrRegNo: '199912345678' }))).status).toBe(403);
   });
 
   it('producer profile includes fields and collection totals', async () => {
-    const res = await (await loginAs('MGT')).get(`/api/v1/producers/${ctx.producers['PRD-00417']._id}`);
+    const res = await (await loginAs('MGT')).get(`/api/v1/producers/${ctx.producers['PRD-00417'].id}`);
     expect(res.body.fields.map((f) => f.code)).toEqual(['F-00417-A', 'F-00417-B']);
     expect(res.body.collections.count).toBeGreaterThan(0);
     expect(res.body.centre.name).toBe('Galaha');
@@ -75,21 +74,21 @@ describe('verification (only MGT)', () => {
   it('only MGT can verify; verified producers can then be collected from', async () => {
     const pending = ctx.producers['PRD-00422'];
     for (const role of ['ADM', 'COL', 'FRM', 'FAC', 'QO', 'BUY']) {
-      expect((await (await loginAs(role)).post(`/api/v1/producers/${pending._id}/verify`)).status).toBe(403);
+      expect((await (await loginAs(role)).post(`/api/v1/producers/${pending.id}/verify`)).status).toBe(403);
     }
     const mgt = await loginAs('MGT');
-    const res = await mgt.post(`/api/v1/producers/${pending._id}/verify`);
+    const res = await mgt.post(`/api/v1/producers/${pending.id}/verify`);
     expect(res.status).toBe(200);
     expect(res.body.verificationStatus).toBe('VERIFIED');
     expect(res.body.verifiedBy.fullName).toBe('Ruwan Senanayake');
-    expect((await mgt.post(`/api/v1/producers/${pending._id}/verify`)).status).toBe(409);
+    expect((await mgt.post(`/api/v1/producers/${pending.id}/verify`)).status).toBe(409);
 
     const col = await loginAs('COL');
     const c = await col.post('/api/v1/collections').send({
-      producerId: String(pending._id), fieldId: String(ctx.fields['PRD-00422'][0]._id), grossKg: 40, tareKg: 2,
+      producerId: pending.id, fieldId: ctx.fields['PRD-00422'][0].id, grossKg: 40, tareKg: 2,
     });
     expect(c.status).toBe(201);
-    expect(await AuditLog.exists({ action: 'PRODUCER_VERIFIED', entityId: String(pending._id) })).toBeTruthy();
+    expect(await prisma.auditLog.findFirst({ where: { action: 'PRODUCER_VERIFIED', entityId: pending.id } })).toBeTruthy();
   });
 
   it('MGT rejects a pending producer with a reason', async () => {
@@ -100,11 +99,11 @@ describe('verification (only MGT)', () => {
     const res = await mgt.post(`/api/v1/producers/${created.body._id}/reject`).send({ reason: 'NIC does not match land deed' });
     expect(res.status).toBe(200);
     expect(res.body.verificationStatus).toBe('REJECTED');
-    expect((await Producer.findById(created.body._id)).rejectionReason).toBe('NIC does not match land deed');
+    expect((await prisma.producer.findUnique({ where: { id: created.body._id } })).rejectionReason).toBe('NIC does not match land deed');
   });
 
   it('MGT and COL can add fields; codes continue the sequence', async () => {
-    const res = await (await loginAs('COL')).post(`/api/v1/producers/${ctx.producers['PRD-00417']._id}/fields`)
+    const res = await (await loginAs('COL')).post(`/api/v1/producers/${ctx.producers['PRD-00417'].id}/fields`)
       .send({ division: 'New block', areaHa: 0.3456, variety: 'TRI 2025' });
     expect(res.status).toBe(201);
     expect(res.body.code).toBe('F-00417-C');

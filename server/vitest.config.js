@@ -6,7 +6,7 @@ export default defineConfig({
     globalSetup: ['./src/tests/globalSetup.js'],
     include: ['src/tests/**/*.test.js'],
     testTimeout: 30000,
-    hookTimeout: 120000, // first run downloads the MongoDB binary
+    hookTimeout: 120000, // each file migrates + seeds its own Postgres schema
     env: { NODE_ENV: 'test', JWT_SECRET: 'test-secret' },
   },
 });

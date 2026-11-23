@@ -1,14 +1,22 @@
-import { MongoMemoryReplSet } from 'mongodb-memory-server';
+import { startEmbeddedPostgres } from '../seed/localPg.js';
 
-// One in-memory replica set for the whole run (replica set = transactions supported).
-// Each test file uses its own database on it.
-let replSet;
+/**
+ * One PostgreSQL server for the whole run. Each test file creates, migrates and drops its own
+ * schema on it (helpers.js), so files run in parallel without sharing data.
+ *   - DATABASE_URL_TEST set (CI service container, local Docker, a Neon branch): use that server.
+ *   - otherwise: start a throw-away embedded PostgreSQL 17 (no Docker needed).
+ */
+let embedded;
 
 export async function setup({ provide }) {
-  replSet = await MongoMemoryReplSet.create({ replSet: { count: 1, storageEngine: 'wiredTiger' } });
-  provide('mongoUri', replSet.getUri());
+  let url = process.env.DATABASE_URL_TEST;
+  if (!url) {
+    embedded = await startEmbeddedPostgres({ port: Number(process.env.TEST_PG_PORT) || 54330, database: 'smarttea_test' });
+    url = embedded.url;
+  }
+  provide('databaseUrl', url);
 }
 
 export async function teardown() {
-  await replSet?.stop();
+  await embedded?.stop();
 }

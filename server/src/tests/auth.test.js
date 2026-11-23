@@ -1,6 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import User from '../models/User.js';
-import AuditLog from '../models/AuditLog.js';
+import { prisma } from '../config/db.js';
 import { app, request, useSeededDb, loginAs, EMAIL } from './helpers.js';
 import { DEMO_PASSWORD } from '../seed/seed.js';
 
@@ -18,7 +17,7 @@ describe('POST /auth/login (ESPTSCMS-15)', () => {
     const cookie = res.headers['set-cookie'][0];
     expect(cookie).toMatch(/^st_session=/);
     expect(cookie).toMatch(/HttpOnly/i);
-    expect(await AuditLog.exists({ action: 'LOGIN_SUCCESS' })).toBeTruthy();
+    expect(await prisma.auditLog.findFirst({ where: { action: 'LOGIN_SUCCESS' } })).toBeTruthy();
   });
 
   it('is case-insensitive on email', async () => {
@@ -49,29 +48,29 @@ describe('POST /auth/login (ESPTSCMS-15)', () => {
     const locked = await login(EMAIL.WH, DEMO_PASSWORD); // even the right password is refused now
     expect(locked.status).toBe(423);
     expect(locked.body.error.code).toBe('ACCOUNT_LOCKED');
-    const user = await User.findOne({ email: EMAIL.WH });
+    const user = await prisma.user.findUnique({ where: { email: EMAIL.WH } });
     const minutes = (user.lockedUntil - Date.now()) / 60000;
     expect(minutes).toBeGreaterThan(14);
     expect(minutes).toBeLessThanOrEqual(15);
 
     // After the lock expires the right password works again.
-    await User.updateOne({ _id: user._id }, { lockedUntil: new Date(Date.now() - 1000) });
+    await prisma.user.update({ where: { id: user.id }, data: { lockedUntil: new Date(Date.now() - 1000) } });
     expect((await login(EMAIL.WH, DEMO_PASSWORD)).status).toBe(200);
   });
 
   it('resets the failure counter after a successful login', async () => {
     for (let i = 0; i < 4; i += 1) await login(EMAIL.FAC, 'Wrong@1234');
     expect((await login(EMAIL.FAC, DEMO_PASSWORD)).status).toBe(200);
-    expect((await User.findOne({ email: EMAIL.FAC })).failedLogins).toBe(0);
+    expect((await prisma.user.findUnique({ where: { email: EMAIL.FAC } })).failedLogins).toBe(0);
   });
 
   it('refuses deactivated users', async () => {
-    await User.updateOne({ email: EMAIL.TRN }, { status: 'DEACTIVATED' });
+    await prisma.user.update({ where: { email: EMAIL.TRN }, data: { status: 'DEACTIVATED' } });
     const res = await login(EMAIL.TRN, DEMO_PASSWORD);
     expect(res.status).toBe(403);
     expect(res.body.error.code).toBe('ACCOUNT_DEACTIVATED');
     expect(res.headers['set-cookie']).toBeUndefined();
-    await User.updateOne({ email: EMAIL.TRN }, { status: 'ACTIVE' });
+    await prisma.user.update({ where: { email: EMAIL.TRN }, data: { status: 'ACTIVE' } });
   });
 });
 
@@ -107,9 +106,9 @@ describe('session', () => {
 
   it('a deactivated user loses access immediately, even with a valid cookie', async () => {
     const agent = await loginAs('QO');
-    await User.updateOne({ email: EMAIL.QO }, { status: 'DEACTIVATED' });
+    await prisma.user.update({ where: { email: EMAIL.QO }, data: { status: 'DEACTIVATED' } });
     expect((await agent.get('/api/v1/auth/me')).status).toBe(401);
-    await User.updateOne({ email: EMAIL.QO }, { status: 'ACTIVE' });
+    await prisma.user.update({ where: { email: EMAIL.QO }, data: { status: 'ACTIVE' } });
   });
 
   it('rejects a tampered token', async () => {
@@ -139,7 +138,7 @@ describe('user administration (ADM)', () => {
     const off = await adm.patch(`/api/v1/users/${created.body._id}`).send({ status: 'DEACTIVATED' });
     expect(off.status).toBe(200);
     expect((await login('new.col@smarttea.lk', 'Strong@123')).status).toBe(403);
-    expect(await AuditLog.exists({ action: 'USER_DEACTIVATED' })).toBeTruthy();
+    expect(await prisma.auditLog.findFirst({ where: { action: 'USER_DEACTIVATED' } })).toBeTruthy();
   });
 
   it('ADM cannot deactivate themselves', async () => {

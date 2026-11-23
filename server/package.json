@@ -9,13 +9,20 @@
     "seed": "node src/seed/run.js",
     "test": "vitest run",
     "test:watch": "vitest",
-    "dev:memory": "node src/seed/memory.js"
+    "dev:memory": "node src/seed/memory.js",
+    "dev:local": "docker compose up -d --wait && prisma migrate deploy && node src/seed/run.js && nodemon index.js",
+    "db:migrate": "prisma migrate dev",
+    "db:deploy": "prisma migrate deploy",
+    "db:generate": "prisma generate",
+    "postinstall": "prisma generate"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "type": "module",
   "dependencies": {
+    "@prisma/adapter-pg": "7.10.1",
+    "@prisma/client": "7.10.1",
     "bcryptjs": "^3.0.3",
     "cookie-parser": "^1.4.7",
     "cors": "^2.8.6",
@@ -24,12 +31,13 @@
     "express-rate-limit": "^8.7.3",
     "helmet": "^8.3.0",
     "jsonwebtoken": "^9.0.3",
-    "mongoose": "^9.11.4",
+    "pg": "8.23.1",
     "zod": "^4.6.7"
   },
   "devDependencies": {
-    "mongodb-memory-server": "^11.3.0",
+    "embedded-postgres": "17.11.0-beta.19",
     "nodemon": "^3.1.14",
+    "prisma": "7.10.1",
     "supertest": "^7.3.1",
     "vitest": "^5.1.0"
   },

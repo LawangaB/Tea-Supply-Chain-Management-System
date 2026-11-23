@@ -10,21 +10,26 @@ green-leaf weighing with batch IDs and printable receipts.
 | Part | Tech |
 |---|---|
 | `client/` | React 19 + Vite, react-router-dom 7, axios, qrcode.react |
-| `server/` | Node 20+ / Express 5 (ES modules), Mongoose 9, MongoDB Atlas, zod, JWT in an httpOnly cookie, bcryptjs, helmet, express-rate-limit |
-| Tests | Vitest + Supertest + mongodb-memory-server (no Atlas needed) |
+| `server/` | Node 20+ / Express 5 (ES modules), PostgreSQL 17 (Neon) via Prisma 7, zod, JWT in an httpOnly cookie, bcryptjs, helmet, express-rate-limit |
+| Tests | Vitest + Supertest on real PostgreSQL: embedded-postgres locally (no Docker needed), a service container in CI |
 | CI | GitHub Actions: server tests and client lint + build on every pull request |
 
 ```
 server/
   index.js              boots the app (connect DB + listen)
   src/app.js            Express app (helmet, CORS, cookies, /api/health, /api/v1)
-  src/config/           env + DB connection
-  src/models/           Mongoose models (User, Producer, Field, Collection, GreenLeafBatch, Counter, AuditLog, …)
-  src/rules/            business rules: permissions.js (role matrix), netWeight.js, codes.js (ID formats)
+  prisma/schema.prisma  full database schema for all sprints (68 tables) – the source of truth, see docs/DATABASE.md
+  prisma/migrations/    SQL migrations, incl. *_db_rules (CHECK constraints, append-only audit_log trigger)
+  prisma.config.js      Prisma CLI config (migrations use DIRECT_URL)
+  docker-compose.yml    optional local PostgreSQL 17
+  src/app.js            Express app (helmet, CORS, cookies, /api/health, /api/v1)
+  src/config/           env + the shared PrismaClient (db.js)
+  src/rules/            business rules: permissions.js (role matrix), netWeight.js, codes.js (ID formats), enums.js
   src/services/         atomic counters, audit log, transactional collection recording
+  src/serializers.js    database rows → API JSON (keeps `_id`, numbers for decimals)
   src/controllers/ routes/ middleware/ validation/
-  src/seed/             seed.js (demo data), run.js (npm run seed), memory.js (npm run dev:memory)
-  src/tests/            unit, API and RBAC tests
+  src/seed/             seed.js (demo data), run.js (npm run seed), memory.js (npm run dev:memory), localPg.js
+  src/tests/            unit, API, RBAC and database-rule tests
 client/src/
   api/ auth/ layout/ components/ pages/ styles/
 docs/                   api.md, DEMO.md, DEPLOYMENT.md
@@ -32,15 +37,18 @@ docs/                   api.md, DEMO.md, DEPLOYMENT.md
 
 ## Setup
 
-Requirements: Node 20 or newer, and a MongoDB Atlas cluster (or use `npm run dev:memory`, which needs no database).
+Requirements: Node 20 or newer, and a PostgreSQL 17 database. Any of these works:
+- a **Neon** project (free; see [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md#1-postgresql-on-neon)), ideally a separate dev branch,
+- **Docker**: `cd server && docker compose up -d` (PostgreSQL 17 on `localhost:5432`, user/password `smarttea`),
+- **nothing at all**: `npm run dev:memory` and `npm test` start their own throw-away PostgreSQL.
 
 ```bash
-# 1. Install
+# 1. Install (also generates the Prisma client)
 cd server && npm install
 cd ../client && npm install
 
 # 2. Configure
-cp server/.env.example server/.env    # set MONGODB_URI and JWT_SECRET
+cp server/.env.example server/.env    # set DATABASE_URL, DIRECT_URL and JWT_SECRET
 cp client/.env.example client/.env    # VITE_API_URL=http://localhost:5000/api/v1
 ```
 
@@ -48,7 +56,9 @@ cp client/.env.example client/.env    # VITE_API_URL=http://localhost:5000/api/v
 
 | Variable | Example | Purpose |
 |---|---|---|
-| `MONGODB_URI` | `mongodb+srv://user:pass@cluster.mongodb.net/smarttea` | Atlas connection (your IP must be on Atlas Network Access) |
+| `DATABASE_URL` | Neon: `postgresql://user:pass@ep-…-pooler.…neon.tech/smarttea?sslmode=require`<br>Docker: `postgresql://smarttea:smarttea@localhost:5432/smarttea` | connection used by the API (Neon: the **pooled** string) |
+| `DIRECT_URL` | Neon: same without `-pooler`<br>Docker: same as `DATABASE_URL` | connection used by `prisma migrate` |
+| `DATABASE_URL_TEST` | optional, e.g. `postgresql://smarttea:smarttea@localhost:5432/smarttea_test` | server for `npm test`; unset = embedded PostgreSQL |
 | `PORT` | `5000` | API port |
 | `JWT_SECRET` | long random string | signs session tokens |
 | `JWT_EXPIRES_IN` | `8h` | session length |
@@ -56,17 +66,22 @@ cp client/.env.example client/.env    # VITE_API_URL=http://localhost:5000/api/v
 | `NODE_ENV` | `development` / `production` | `production` turns on `Secure; SameSite=None` cookies |
 
 ```bash
-# 3. Load demo data (wipes the database!)
-cd server && npm run seed
+# 3. Create the tables, then load demo data (the seed wipes the database!)
+cd server && npm run db:deploy && npm run seed
 
 # 4. Run both dev servers (two terminals)
 cd server && npm run dev      # http://localhost:5000  (GET /api/health)
 cd client && npm run dev      # http://localhost:5173
 
-# Offline alternative to steps 3–4 for the API: in-memory MongoDB, pre-seeded, nothing saved
-cd server && npm run dev:memory
+# Alternatives to steps 3–4 for the API:
+cd server && npm run dev:memory   # throw-away embedded PostgreSQL 17, migrated + seeded, nothing saved, no Docker
+cd server && npm run dev:local    # Docker PostgreSQL from docker-compose.yml, migrate + seed + dev server
 
-# Tests
+# Database
+cd server && npm run db:migrate -- --name what_changed   # after editing prisma/schema.prisma (local DB only)
+cd server && npm run db:generate                          # regenerate the Prisma client
+
+# Tests (each test file gets its own schema, migrated and dropped afterwards)
 cd server && npm test
 cd client && npm run lint && npm run build
 ```
@@ -102,7 +117,7 @@ The step-by-step client demo is in **[docs/DEMO.md](docs/DEMO.md)**.
 | ESPTSCMS-83 | US-021 Collection receipt `RC-NNNNN` with QR code of the batch ID, printable | M07 `pages/Receipt.jsx` |
 | ESPTSCMS-145 | Role-based landing pages; MGT totals; "Coming in Sprint N" placeholders | `pages/Dashboard.jsx`, `pages/ComingSoon.jsx` |
 | ESPTSCMS-136/146 | One-command seed | `npm run seed` |
-| ESPTSCMS-138 | End-to-end skeleton | client ⇄ API ⇄ MongoDB |
+| ESPTSCMS-138 | End-to-end skeleton | client ⇄ API ⇄ PostgreSQL (Neon) |
 | ESPTSCMS-137 | API documentation | [docs/api.md](docs/api.md) |
 | ESPTSCMS-148 | Deployment notes | [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) |
 

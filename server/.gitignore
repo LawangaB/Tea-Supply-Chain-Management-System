@@ -9,3 +9,6 @@ node_modules/
 # Logs and OS files
 *.log
 .DS_Store
+
+# Prisma generated client (npm install / npm run db:generate)
+src/generated/

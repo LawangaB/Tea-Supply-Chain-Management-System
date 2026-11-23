@@ -1,26 +1,27 @@
-import AuditLog from '../models/AuditLog.js';
+import { prisma } from '../config/db.js';
 
 /**
- * Append an audit entry. Pass `session` to make it part of a transaction.
+ * Append an audit entry. Pass `tx` (a Prisma transaction client) to make it part of a transaction.
  * Audit failures outside a transaction are logged but never break the request.
+ * The audit_log table is append-only (a database trigger refuses UPDATE and DELETE).
  */
-export async function audit({ req, user, action, entityType, entityId, oldValue, newValue, reason, session }) {
-  const entry = {
-    user: user ?? req?.user?.id ?? null,
+export async function audit({ req, user, action, entityType, entityId, oldValue, newValue, reason, tx }) {
+  const data = {
+    userId: user ?? req?.user?.id ?? null,
     action,
     entityType,
     entityId: entityId ? String(entityId) : null,
-    oldValue: oldValue ?? null,
-    newValue: newValue ?? null,
+    oldValue: oldValue ?? undefined, // undefined → SQL NULL
+    newValue: newValue ?? undefined,
     reason: reason ?? null,
     ip: req?.ip ?? null,
   };
-  if (session) {
-    await AuditLog.create([entry], { session });
+  if (tx) {
+    await tx.auditLog.create({ data });
     return;
   }
   try {
-    await AuditLog.create(entry);
+    await prisma.auditLog.create({ data });
   } catch (err) {
     console.error('Audit log write failed:', err.message);
   }
