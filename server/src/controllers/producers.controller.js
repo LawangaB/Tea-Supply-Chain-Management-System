@@ -7,6 +7,7 @@ import { roundKg } from '../rules/netWeight.js';
 import { PRODUCER_TYPES, VERIFICATION_STATUSES } from '../rules/enums.js';
 import { nextSeq } from '../services/counter.js';
 import { audit } from '../services/audit.js';
+import { decideVerification } from '../services/producer.service.js';
 import { fieldOut, producerOut } from '../serializers.js';
 import { assertUuid, icontains, isUuid, pageParams } from './util.js';
 
@@ -119,32 +120,19 @@ export async function createProducer(req, res) {
   res.status(201).json(producerOut(producer));
 }
 
+/** US-015 (ESPTSCMS-80): approve a PENDING producer (MGT only, via authorize('producer:verify')). */
 export async function verifyProducer(req, res) {
   const producer = await loadProducer(req);
-  if (producer.verificationStatus === 'VERIFIED') throw ApiError.conflict('Producer is already verified');
-  const old = producer.verificationStatus;
-  const updated = await prisma.producer.update({
-    where: { id: producer.id },
-    data: { verificationStatus: 'VERIFIED', verifiedById: req.user.id, verifiedAt: new Date(), rejectionReason: null },
-    include: FULL,
-  });
-  await audit({ req, action: 'PRODUCER_VERIFIED', entityType: 'Producer', entityId: producer.id,
-    oldValue: { verificationStatus: old }, newValue: { verificationStatus: 'VERIFIED' } });
+  const updated = await decideVerification({ req, producerId: producer.id, decision: 'verify', include: FULL });
   res.json(producerOut(updated));
 }
 
+/** US-015: reject a PENDING producer with a reason; the reason is shown to officers on the producer profile. */
 export async function rejectProducer(req, res) {
   const producer = await loadProducer(req);
-  if (producer.verificationStatus !== 'PENDING') {
-    throw ApiError.conflict(`Only pending producers can be rejected (current status: ${producer.verificationStatus})`);
-  }
-  const updated = await prisma.producer.update({
-    where: { id: producer.id },
-    data: { verificationStatus: 'REJECTED', verifiedById: req.user.id, verifiedAt: new Date(), rejectionReason: req.body.reason },
-    include: FULL,
+  const updated = await decideVerification({
+    req, producerId: producer.id, decision: 'reject', reason: req.body.reason, include: FULL,
   });
-  await audit({ req, action: 'PRODUCER_REJECTED', entityType: 'Producer', entityId: producer.id,
-    oldValue: { verificationStatus: 'PENDING' }, newValue: { verificationStatus: 'REJECTED' }, reason: req.body.reason });
   res.json(producerOut(updated));
 }
 

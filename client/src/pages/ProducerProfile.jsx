@@ -28,7 +28,7 @@ export default function ProducerProfile() {
         )} />
 
       {p.verificationStatus === 'PENDING' && can('producer:verify') && (
-        <VerifyPanel producer={p} onDone={(updated) => setData({ ...p, ...updated })} />
+        <VerifyPanel producer={p} onDone={(updated) => setData({ ...p, ...updated })} onStale={reload} />
       )}
       {p.verificationStatus === 'PENDING' && !can('producer:verify') && (
         <div style={{ marginBottom: 16 }}><Alert tone="warning">Awaiting verification by Management. Leaf cannot be collected from this producer yet.</Alert></div>
@@ -94,7 +94,7 @@ export default function ProducerProfile() {
   );
 }
 
-function VerifyPanel({ producer, onDone }) {
+function VerifyPanel({ producer, onDone, onStale }) {
   const [mode, setMode] = useState(null);
   const [reason, setReason] = useState('');
   const [err, setErr] = useState(null);
@@ -104,7 +104,11 @@ function VerifyPanel({ producer, onDone }) {
     try {
       const { data } = await api.post(`/producers/${producer._id}/${kind}`, kind === 'reject' ? { reason } : {});
       onDone(data);
-    } catch (e) { setErr(apiError(e)); } finally { setBusy(false); }
+    } catch (e) {
+      const ae = apiError(e);
+      // 409: another manager already decided – reload so the page shows the current status.
+      if (ae.status === 409) onStale(); else setErr(ae);
+    } finally { setBusy(false); }
   };
   return (
     <div className="card card-body" style={{ marginBottom: 16, borderColor: 'var(--warning)', background: 'var(--warning-bg)' }}>

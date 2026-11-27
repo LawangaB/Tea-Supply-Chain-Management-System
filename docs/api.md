@@ -60,8 +60,8 @@ Every error has the same shape:
 | GET | `/producers?q=&status=&type=&centre=&page=&limit=` | MGT, COL, FRM (own) | `q` searches code, name, NIC/reg. no. and phone. Returns `{ items, total, page, limit }` |
 | POST | `/producers` | MGT, COL | `{ type: SMALLHOLDER\|ESTATE\|ORG_MEMBER, fullName, nicOrRegNo, phone?, address?, centreId, orgId? (required for ORG_MEMBER), fields?: [{ division?, areaHa, variety?, gps?: {lat,lng} }] }` → `201`, status **PENDING**, code `PRD-NNNNN`, field codes `F-NNNNN-A…`. Non-estates need a valid NIC (`851234567V` / `198512345678`). Duplicate NIC → 409. |
 | GET | `/producers/:id` | MGT, COL, FRM (own) | Producer + `fields` + `collections: { count, totalNetKg, lastCollectedAt }` |
-| POST | `/producers/:id/verify` | MGT | → `VERIFIED` (409 if it's already verified) |
-| POST | `/producers/:id/reject` | MGT | `{ reason }`. Only from PENDING → `REJECTED` |
+| POST | `/producers/:id/verify` | MGT | US-015: only from PENDING → `VERIFIED` (409 if already verified or rejected). Status change and `PRODUCER_VERIFIED` audit entry are one transaction; of two simultaneous decisions exactly one succeeds, the other gets 409. |
+| POST | `/producers/:id/reject` | MGT | `{ reason }` (3–300 chars). Only from PENDING → `REJECTED`; the reason is returned as `rejectionReason` on the producer, so officers see it. Audited as `PRODUCER_REJECTED` with the reason. |
 | GET | `/producers/:id/fields` | MGT, COL, FRM (own) | `{ items, total }` |
 | POST | `/producers/:id/fields` | MGT, COL, FRM (own) | `{ division?, areaHa, variety?, gps? }` (area rounded to 3 dp). Rejected producer → 409. |
 | GET | `/fields?q=&producerId=&status=ACTIVE\|INACTIVE&page=&limit=` | MGT, COL, FRM (own) | US-016 field search: `q` matches field code, division, variety, producer code/name. FRM only ever gets their own fields. `{ items: [field + producer: { _id, code, fullName }], total, page, limit }` |
