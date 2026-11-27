@@ -63,7 +63,10 @@ Every error has the same shape:
 | POST | `/producers/:id/verify` | MGT | → `VERIFIED` (409 if it's already verified) |
 | POST | `/producers/:id/reject` | MGT | `{ reason }`. Only from PENDING → `REJECTED` |
 | GET | `/producers/:id/fields` | MGT, COL, FRM (own) | `{ items, total }` |
-| POST | `/producers/:id/fields` | MGT, COL | `{ division?, areaHa, variety?, gps? }` (area rounded to 3 dp) |
+| POST | `/producers/:id/fields` | MGT, COL, FRM (own) | `{ division?, areaHa, variety?, gps? }` (area rounded to 3 dp). Rejected producer → 409. |
+| GET | `/fields?q=&producerId=&status=ACTIVE\|INACTIVE&page=&limit=` | MGT, COL, FRM (own) | US-016 field search: `q` matches field code, division, variety, producer code/name. FRM only ever gets their own fields. `{ items: [field + producer: { _id, code, fullName }], total, page, limit }` |
+| GET | `/fields/:id` | MGT, COL, FRM (own) | One field + producer. Another farmer's field → 403. |
+| PATCH | `/fields/:id` | MGT, FRM (own) | US-016 edit: any of `{ division?, areaHa?, variety?, gps?: {lat,lng}\|null, status?: ACTIVE\|INACTIVE }`. `gps: null` clears the location; fields are deactivated, never deleted. COL can view but not edit (403). Audited as `FIELD_UPDATED` / `FIELD_DEACTIVATED` / `FIELD_REACTIVATED`. |
 
 ### Collections – US-020/021/022 (ESPTSCMS-20, -83, -84)
 | Method | Path | Who | Notes |

@@ -29,8 +29,11 @@ export const PERMISSIONS = {
   'producer:read': { MGT: 'all', COL: 'all', FRM: 'own' },
   'producer:create': { MGT: 'all', COL: 'all' },
   'producer:update': { MGT: 'all' },
-  // Fields are registered as part of the producer record (create = MGT, COL)
-  'field:create': { MGT: 'all', COL: 'all' },
+  // Fields – US-016 (ESPTSCMS-18), matrix M2-R3: FRM CRU(own), MGT CRU, COL CR (registers fields with a
+  // producer and views them for collection, but cannot edit them afterwards).
+  'field:read': { MGT: 'all', COL: 'all', FRM: 'own' },
+  'field:create': { MGT: 'all', COL: 'all', FRM: 'own' },
+  'field:update': { MGT: 'all', FRM: 'own' },
 
   // Verify / approve a producer (MGT A)
   'producer:verify': { MGT: 'all' },

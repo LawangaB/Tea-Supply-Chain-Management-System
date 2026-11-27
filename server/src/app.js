@@ -9,6 +9,7 @@ import authRoutes from './routes/auth.routes.js';
 import lookupsRoutes from './routes/lookups.routes.js';
 import usersRoutes from './routes/users.routes.js';
 import producersRoutes from './routes/producers.routes.js';
+import fieldsRoutes from './routes/fields.routes.js';
 import collectionsRoutes from './routes/collections.routes.js';
 import dashboardRoutes from './routes/dashboard.routes.js';
 
@@ -31,6 +32,7 @@ export function createApp() {
   app.use(`${API}/lookups`, authenticate, lookupsRoutes);
   app.use(`${API}/users`, authenticate, usersRoutes);
   app.use(`${API}/producers`, authenticate, producersRoutes);
+  app.use(`${API}/fields`, authenticate, fieldsRoutes);
   app.use(`${API}/collections`, authenticate, collectionsRoutes);
   app.use(`${API}/dashboard`, authenticate, dashboardRoutes);
 

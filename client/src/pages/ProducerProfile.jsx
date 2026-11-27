@@ -42,19 +42,8 @@ export default function ProducerProfile() {
           <div className="card">
             <div className="card-header"><h2>Fields</h2><span className="muted small">{p.fields.length} registered</span></div>
             {p.fields.length === 0 ? <Empty title="No fields registered" /> : (
-              <div className="table-wrap">
-                <table className="table">
-                  <thead><tr><th>Field</th><th>Division</th><th>Variety</th><th className="num">Area (ha)</th><th>Status</th></tr></thead>
-                  <tbody>
-                    {p.fields.map((f) => (
-                      <tr key={f._id}>
-                        <td className="mono">{f.code}</td><td>{f.division || '—'}</td><td>{f.variety || '—'}</td>
-                        <td className="num">{f.areaHa.toFixed(3)}</td><td><StatusBadge status={f.status} /></td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+              <FieldsTable fields={p.fields} canEdit={can('field:update') && p.verificationStatus !== 'REJECTED'}
+                onChanged={(f) => setData({ ...p, fields: p.fields.map((x) => (x._id === f._id ? { ...x, ...f, producer: x.producer } : x)) })} />
             )}
             {can('field:create') && p.verificationStatus !== 'REJECTED' && <AddField producerId={p._id} onAdded={reload} />}
           </div>
@@ -147,28 +136,103 @@ function VerifyPanel({ producer, onDone }) {
   );
 }
 
-function AddField({ producerId, onAdded }) {
-  const [open, setOpen] = useState(false);
-  const [f, setF] = useState({ division: '', areaHa: '', variety: '' });
+const toNum = (v) => (v === '' || v === null || v === undefined ? undefined : Number(v));
+const emptyField = { division: '', areaHa: '', variety: '', lat: '', lng: '' };
+const fromField = (f) => ({
+  division: f.division || '', areaHa: String(f.areaHa), variety: f.variety || '',
+  lat: f.gps ? String(f.gps.lat) : '', lng: f.gps ? String(f.gps.lng) : '',
+});
+
+/** Form values -> API body. GPS is sent only when both coordinates are filled; on edit, empty GPS clears it. */
+function toBody(f, { edit = false } = {}) {
+  const hasGps = f.lat !== '' || f.lng !== '';
+  const body = { division: f.division, areaHa: toNum(f.areaHa), variety: f.variety };
+  if (hasGps) body.gps = { lat: toNum(f.lat), lng: toNum(f.lng) };
+  else if (edit) body.gps = null;
+  return body;
+}
+
+/** Field errors for gps.lat / gps.lng (and a gps error when only one coordinate was given). */
+const gpsError = (err, key) => err?.fields[`gps.${key}`] || err?.fields.gps;
+
+/** Shared add / edit form – US-016 location (division + GPS), area and tea variety. */
+function FieldForm({ initial, submitLabel, onSubmit, onCancel }) {
+  const [f, setF] = useState(initial);
   const [err, setErr] = useState(null);
   const [busy, setBusy] = useState(false);
+  const set = (k) => (e) => setF({ ...f, [k]: e.target.value });
   const submit = async (e) => {
-    e.preventDefault(); setBusy(true); setErr(null);
-    try {
-      await api.post(`/producers/${producerId}/fields`, { ...f, areaHa: f.areaHa === '' ? undefined : Number(f.areaHa) });
-      setF({ division: '', areaHa: '', variety: '' }); setOpen(false); onAdded();
-    } catch (e2) { setErr(apiError(e2)); } finally { setBusy(false); }
+    e.preventDefault(); setErr(null);
+    if ((f.lat === '') !== (f.lng === '')) {
+      setErr({ message: '', fields: { gps: 'Enter both latitude and longitude, or leave both empty' } });
+      return;
+    }
+    setBusy(true);
+    try { await onSubmit(f); } catch (e2) { setErr(apiError(e2)); } finally { setBusy(false); }
   };
-  if (!open) return <div className="card-body" style={{ borderTop: '1px solid var(--border)' }}><button type="button" className="btn secondary sm" onClick={() => setOpen(true)}><Icon name="plus" size={14} /> Add field</button></div>;
+  const cls = (k) => `input ${err?.fields[k] ? 'invalid' : ''}`;
   return (
     <form className="card-body form" style={{ borderTop: '1px solid var(--border)' }} onSubmit={submit} noValidate>
       <div className="form-grid">
-        <FormField label="Division" error={err?.fields.division}><input className="input" value={f.division} onChange={(e) => setF({ ...f, division: e.target.value })} /></FormField>
-        <FormField label="Area (ha)" error={err?.fields.areaHa}><input className={`input ${err?.fields.areaHa ? 'invalid' : ''}`} inputMode="decimal" value={f.areaHa} onChange={(e) => setF({ ...f, areaHa: e.target.value })} /></FormField>
-        <FormField label="Variety" error={err?.fields.variety}><input className="input" value={f.variety} onChange={(e) => setF({ ...f, variety: e.target.value })} placeholder="e.g. TRI 2025" /></FormField>
+        <FormField label="Division / location" error={err?.fields.division}><input className={cls('division')} value={f.division} onChange={set('division')} placeholder="e.g. Upper slope" /></FormField>
+        <FormField label="Area (ha)" error={err?.fields.areaHa}><input className={cls('areaHa')} inputMode="decimal" value={f.areaHa} onChange={set('areaHa')} /></FormField>
+        <FormField label="Tea variety" error={err?.fields.variety}><input className={cls('variety')} value={f.variety} onChange={set('variety')} placeholder="e.g. TRI 2025" /></FormField>
+        <FormField label="GPS latitude" hint="Optional, e.g. 7.0263" error={gpsError(err, 'lat')}><input className={`input ${gpsError(err, 'lat') ? 'invalid' : ''}`} inputMode="decimal" value={f.lat} onChange={set('lat')} /></FormField>
+        <FormField label="GPS longitude" hint="Optional, e.g. 80.6873" error={gpsError(err, 'lng')}><input className={`input ${gpsError(err, 'lng') ? 'invalid' : ''}`} inputMode="decimal" value={f.lng} onChange={set('lng')} /></FormField>
       </div>
-      {err && !Object.keys(err.fields).length && <Alert>{err.message}</Alert>}
-      <div className="row"><button type="button" className="btn secondary" onClick={() => setOpen(false)}>Cancel</button><button className="btn" disabled={busy}>Save field</button></div>
+      {err?.message && !Object.keys(err.fields).length && <Alert>{err.message}</Alert>}
+      <div className="row"><button type="button" className="btn secondary" onClick={onCancel}>Cancel</button><button className="btn" disabled={busy}>{submitLabel}</button></div>
     </form>
+  );
+}
+
+function AddField({ producerId, onAdded }) {
+  const [open, setOpen] = useState(false);
+  if (!open) return <div className="card-body" style={{ borderTop: '1px solid var(--border)' }}><button type="button" className="btn secondary sm" onClick={() => setOpen(true)}><Icon name="plus" size={14} /> Add field</button></div>;
+  return (
+    <FieldForm initial={emptyField} submitLabel="Save field" onCancel={() => setOpen(false)}
+      onSubmit={async (f) => { await api.post(`/producers/${producerId}/fields`, toBody(f)); setOpen(false); onAdded(); }} />
+  );
+}
+
+/** Field list. Owners (FRM) and Management can edit or deactivate; Collection Officers only view. */
+function FieldsTable({ fields, canEdit, onChanged }) {
+  const [editing, setEditing] = useState(null);
+  const [err, setErr] = useState(null);
+  const setStatus = async (f, status) => {
+    setErr(null);
+    try { onChanged((await api.patch(`/fields/${f._id}`, { status })).data); } catch (e) { setErr(apiError(e)); }
+  };
+  return (
+    <>
+      <div className="table-wrap">
+        <table className="table">
+          <thead><tr><th>Field</th><th>Division</th><th>Variety</th><th className="num">Area (ha)</th><th>GPS</th><th>Status</th>{canEdit && <th />}</tr></thead>
+          <tbody>
+            {fields.map((f) => (
+              <tr key={f._id}>
+                <td className="mono">{f.code}</td><td>{f.division || '—'}</td><td>{f.variety || '—'}</td>
+                <td className="num">{f.areaHa.toFixed(3)}</td>
+                <td className="mono small nowrap">{f.gps ? `${f.gps.lat.toFixed(4)}, ${f.gps.lng.toFixed(4)}` : '—'}</td>
+                <td><StatusBadge status={f.status} /></td>
+                {canEdit && (
+                  <td className="nowrap">
+                    <button type="button" className="btn secondary sm" onClick={() => setEditing(f)}>Edit</button>{' '}
+                    {f.status === 'ACTIVE'
+                      ? <button type="button" className="btn secondary sm" onClick={() => setStatus(f, 'INACTIVE')}>Deactivate</button>
+                      : <button type="button" className="btn secondary sm" onClick={() => setStatus(f, 'ACTIVE')}>Reactivate</button>}
+                  </td>
+                )}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      {err && <div className="card-body"><Alert>{err.message}</Alert></div>}
+      {editing && (
+        <FieldForm key={editing._id} initial={fromField(editing)} submitLabel={`Save ${editing.code}`} onCancel={() => setEditing(null)}
+          onSubmit={async (f) => { onChanged((await api.patch(`/fields/${editing._id}`, toBody(f, { edit: true }))).data); setEditing(null); }} />
+      )}
+    </>
   );
 }

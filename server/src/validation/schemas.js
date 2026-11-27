@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { ROLE_CODES } from '../rules/permissions.js';
-import { PRODUCER_TYPES, USER_STATUSES } from '../rules/enums.js';
+import { FIELD_STATUSES, PRODUCER_TYPES, USER_STATUSES } from '../rules/enums.js';
 import { UUID_RE } from '../controllers/util.js';
 
 /** Record ids are UUIDs (Postgres). Same messages as the old ObjectId check. */
@@ -56,6 +56,23 @@ export const fieldSchema = z.object({
     lat: z.number().min(-90).max(90),
     lng: z.number().min(-180).max(180),
   }).optional(),
+});
+
+/** US-016: edit a field. Any subset of attributes; gps: null clears the location; INACTIVE deactivates. */
+export const updateFieldSchema = z.object({
+  division: z.string().trim().max(80).nullable().optional().transform((v) => (v === '' ? null : v)),
+  areaHa: fieldSchema.shape.areaHa.optional(),
+  variety: z.string().trim().max(80).nullable().optional().transform((v) => (v === '' ? null : v)),
+  gps: fieldSchema.shape.gps.unwrap().nullable().optional(),
+  status: z.enum(FIELD_STATUSES, { message: 'Status must be ACTIVE or INACTIVE' }).optional(),
+}).refine((v) => Object.values(v).some((x) => x !== undefined), { message: 'Nothing to update' });
+
+export const listFieldsQuerySchema = z.object({
+  q: z.string().trim().max(100).optional(),
+  producerId: uuid('producer').optional(),
+  status: z.enum(FIELD_STATUSES).optional(),
+  page: z.coerce.number().int().min(1).default(1),
+  limit: z.coerce.number().int().min(1).max(100).default(20),
 });
 
 export const createProducerSchema = z.object({
